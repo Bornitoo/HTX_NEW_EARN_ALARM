@@ -7,6 +7,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "htx-earn.db")
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS earn_cycles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,7 +17,7 @@ async def init_db():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS earn_rows (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cycle_id INTEGER REFERENCES earn_cycles(id),
+                cycle_id INTEGER REFERENCES earn_cycles(id) ON DELETE CASCADE,
                 token TEXT,
                 apy TEXT,
                 term TEXT
@@ -47,8 +48,21 @@ async def set_setting(key: str, value: str):
         await db.commit()
 
 
+async def is_test_mode() -> bool:
+    val = await get_setting("test_mode", "0")
+    return val == "1"
+
+
+async def toggle_test_mode() -> bool:
+    current = await is_test_mode()
+    new_val = "0" if current else "1"
+    await set_setting("test_mode", new_val)
+    return not current  # returns new state
+
+
 async def save_cycle(rows: list[dict]) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
         cur = await db.execute("INSERT INTO earn_cycles DEFAULT VALUES")
         cycle_id = cur.lastrowid
         for r in rows:
@@ -60,7 +74,21 @@ async def save_cycle(rows: list[dict]) -> int:
         return cycle_id
 
 
+async def cleanup_old_cycles():
+    """Delete cycles (and their rows via CASCADE) older than 24 hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
+        cur = await db.execute(
+            "DELETE FROM earn_cycles WHERE scraped_at < ?", (cutoff,)
+        )
+        deleted = cur.rowcount
+        await db.commit()
+    return deleted
+
+
 async def get_last_cycle_rows() -> list[dict]:
+    """Returns rows from the second-most-recent cycle (for diff)."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT id FROM earn_cycles ORDER BY id DESC LIMIT 1 OFFSET 1"
@@ -70,11 +98,10 @@ async def get_last_cycle_rows() -> list[dict]:
             return []
         cycle_id = row[0]
         async with db.execute(
-            "SELECT token, apy, term FROM earn_rows WHERE cycle_id=?",
-            (cycle_id,)
+            "SELECT token, apy, term FROM earn_rows WHERE cycle_id=?", (cycle_id,)
         ) as cur:
             rows = await cur.fetchall()
-        return [{"token": r[0], "apy": r[1], "term": r[2]} for r in rows]
+    return [{"token": r[0], "apy": r[1], "term": r[2]} for r in rows]
 
 
 async def get_current_cycle_rows() -> list[dict]:
@@ -88,11 +115,10 @@ async def get_current_cycle_rows() -> list[dict]:
             return []
         cycle_id = row[0]
         async with db.execute(
-            "SELECT token, apy, term FROM earn_rows WHERE cycle_id=?",
-            (cycle_id,)
+            "SELECT token, apy, term FROM earn_rows WHERE cycle_id=?", (cycle_id,)
         ) as cur:
             rows = await cur.fetchall()
-        return [{"token": r[0], "apy": r[1], "term": r[2]} for r in rows]
+    return [{"token": r[0], "apy": r[1], "term": r[2]} for r in rows]
 
 
 def compute_diff(old_rows: list[dict], new_rows: list[dict]):
@@ -135,3 +161,12 @@ def format_table(rows: list[dict]) -> str:
 async def schedule_next_run(interval_minutes: int):
     next_run = (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)).isoformat()
     await set_setting("next_run_at", next_run)
+
+
+async def clear_all_data():
+    """Wipe all cycles and rows."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute("DELETE FROM earn_rows")
+        await db.execute("DELETE FROM earn_cycles")
+        await db.commit()
