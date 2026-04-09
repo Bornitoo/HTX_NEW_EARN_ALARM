@@ -1,0 +1,6 @@
+settings.env
+htx-earn.db
+bot.log
+__pycache__/
+*.pyc
+.env

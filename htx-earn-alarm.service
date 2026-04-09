@@ -1,0 +1,16 @@
+[Unit]
+Description=HTX New Earn Alarm Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/HTX_NEW_EARN_ALARM
+EnvironmentFile=/root/HTX_NEW_EARN_ALARM/settings.env
+ExecStart=/usr/bin/python3 /root/HTX_NEW_EARN_ALARM/bot.py
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

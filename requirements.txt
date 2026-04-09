@@ -1,0 +1,4 @@
+python-telegram-bot==21.10
+aiosqlite==0.20.0
+playwright==1.44.0
+python-dotenv==1.0.1
